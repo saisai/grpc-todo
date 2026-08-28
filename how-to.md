@@ -68,3 +68,78 @@ go test ./server/ -run TestCreateTodo_Success -v
 # With coverage
 go test ./server/ -cover
 ```
+
+## What is gRPC Reflection?
+gRPC Server Reflection is a special service that a gRPC server can expose. It allows tools to discover the services, methods, and message types at runtime without needing the .proto files.
+
+Think of it like an automatic OpenAPI/Swagger endpoint for gRPC.
+
+## Why it’s useful
+
+1.Inspect services without the original .proto files
+2.Call any RPC from the command line or GUI tools
+3.Great for development, debugging, and exploring APIs
+4.Works with popular tools: grpcurl, grpcui, Postman, BloomRPC, etc.
+
+```
+"google.golang.org/grpc/reflection"   // ← add this
+
+// Enable reflection (only for development!)
+	reflection.Register(s)                // ← add this
+```
+
+## Debugging Tools
+```
+go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+```
+
+## grpcui (web UI – highly recommended)
+```
+grpcui (web UI – highly recommended)
+
+go run ./server
+# or with a real DB
+DB_DRIVER=pgx go run ./server
+```
+
+## List all services
+```
+grpcurl -plaintext localhost:50051 list
+```
+
+## List methods of TodoService
+```
+grpcurl -plaintext localhost:50051 list todo.TodoService
+```
+
+## Describe a method (see request/response shape)
+```
+grpcurl -plaintext localhost:50051 describe todo.TodoService.CreateTodo
+```
+
+## Call CreateTodo
+```
+grpcurl -plaintext -d '{
+  "title": "Learn gRPC Reflection",
+  "description": "Very useful for debugging"
+}' localhost:50051 todo.TodoService/CreateTodo
+```
+
+## Quick Reference Commands
+```
+# List services
+grpcurl -plaintext localhost:50051 list
+
+# List methods
+grpcurl -plaintext localhost:50051 list todo.TodoService
+
+# Describe service / method
+grpcurl -plaintext localhost:50051 describe todo.TodoService
+grpcurl -plaintext localhost:50051 describe todo.TodoService.CreateTodo
+
+# Call a method
+grpcurl -plaintext -d '{"title":"test"}' localhost:50051 todo.TodoService/CreateTodo
+
+# Launch web UI
+grpcui -plaintext localhost:50051
+```

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 const port = ":50051"
@@ -114,6 +115,9 @@ func main() {
 
 	s := grpc.NewServer()
 	pb.RegisterTodoServiceServer(s, newServer(repo))
+
+	// Enable reflection (only for development!)
+	reflection.Register(s) // ← add this
 
 	fmt.Printf("🚀 gRPC Todo Server listening on %s\n", port)
 	if err := s.Serve(lis); err != nil {
