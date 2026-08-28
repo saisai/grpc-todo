@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package todo;
+
+option go_package = "github.com/saisai/grpc-todo/proto;todo";
+
+// Todoservice provides CRUD operations for a simple todo list.
+service TodoService {
+  rpc CreateTodo (CreateTodoRequest) returns (Todo);
+  rpc GetTodo (GetTodoRequest) returns (Todo);
+  rpc ListTodos (ListTodosRequest) returns (ListTodosResponse);
+  rpc UpdateTodo (UpdateTodoRequest) returns (Todo);
+  rpc DeleteTodo (DeleteTodoRequest) returns (DeleteTodoResponse);
+}
+
+message Todo {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  bool completed = 4;
+  int64 created_at = 5; //unix timestamp
+}
+
+message CreateTodoRequest {
+  string title = 1;
+  string description = 2;
+}
+
+message GetTodoRequest {
+  string id = 1;
+}
+
+message ListTodosRequest {
+  optional bool completed = 1; // optional filter
+}
+
+message ListTodosResponse {
+  repeated Todo todos = 1;
+}
+
+message UpdateTodoRequest {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  bool completed = 4;
+}
+
+message DeleteTodoRequest {
+  string id = 1;
+}
+
+message DeleteTodoResponse {
+  bool success = 1;
+}
