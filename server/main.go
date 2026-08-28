@@ -13,6 +13,7 @@ import (
 	"github.com/saisai/grpc-todo/server/repository"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
 )
 
@@ -83,7 +84,7 @@ func main() {
 		repo = repository.NewPgxReposistory(pool)
 		log.Println("✅ Using PostgreSQL with pgx")
 
-	case "pg":
+	case "pq":
 		dsn := getDSN()
 		db, err := sql.Open("postgres", dsn)
 		if err != nil {

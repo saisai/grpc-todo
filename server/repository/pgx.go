@@ -26,14 +26,14 @@ func (r *PgxRepository) Create(ctx context.Context, title, description string) (
 
 	var (
 		id        string
-		CreatedAt time.Time
+		createdAt time.Time
 	)
 
-	err := r.db.QueryRow(ctx, ` 
+	err := r.db.QueryRow(ctx, `
 		INSERT INTO todos (title, description)
 		VALUES ($1, $2)
-		RETURNINT id::text, created_at
-	`, title, description).Scan(&id, &CreatedAt)
+		RETURNING id::text, created_at
+	`, title, description).Scan(&id, &createdAt)
 
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to create todo")
@@ -43,6 +43,8 @@ func (r *PgxRepository) Create(ctx context.Context, title, description string) (
 		Id:          id,
 		Title:       title,
 		Description: description,
+		Completed:   false,
+		CreatedAt:   createdAt.Unix(),
 	}, nil
 }
 
