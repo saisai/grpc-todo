@@ -56,3 +56,15 @@ DB_DRIVER=pq go run ./server
 # Custom connection string
 DB_DRIVER=pgx DATABASE_URL="postgres://user:pass@localhost:5432/todo_db?sslmode=disable" go run ./server
 ```
+
+## How to run the tests
+```
+# Run all tests
+go test ./server/ -v
+
+# Run only one test
+go test ./server/ -run TestCreateTodo_Success -v
+
+# With coverage
+go test ./server/ -cover
+```
