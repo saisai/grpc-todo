@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net"
@@ -9,12 +10,10 @@ import (
 	"time"
 
 	pb "github.com/saisai/grpc-todo/proto"
+	"github.com/saisai/grpc-todo/server/repository"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const port = ":50051"
@@ -22,221 +21,90 @@ const port = ":50051"
 // server implements the generated TodoServiceServer interface
 type server struct {
 	pb.UnimplementedTodoServiceServer // required for forward compatibility
-	db                                *pgxpool.Pool
+	repo                              repository.TodoRepository
 }
 
-func newServer(db *pgxpool.Pool) *server {
-	return &server{db: db}
+func newServer(repo repository.TodoRepository) *server {
+	return &server{repo: repo}
 }
 
 func (s *server) CreateTodo(ctx context.Context, req *pb.CreateTodoRequest) (*pb.Todo, error) {
-	if req.Title == "" {
-		return nil, status.Error(codes.InvalidArgument, "title is required")
-	}
-
-	var (
-		id        string
-		createdAt time.Time
-	)
-
-	err := s.db.QueryRow(ctx, ` 
-		INSERT INTO todos (title, description)
-		VALUES ($1, $2)
-		RETURNING id::text, created_at
-	`, req.Title, req.Description).Scan(&id, &createdAt)
-
-	if err != nil {
-		log.Printf("CreateTodo error: %v", err)
-		return nil, status.Error(codes.Internal, "failed to create todo")
-	}
-
-	todo := &pb.Todo{
-		Id:          id,
-		Title:       req.Title,
-		Description: req.Description,
-		Completed:   false,
-		CreatedAt:   createdAt.Unix(),
-	}
-
-	log.Printf("Created todo: %s - %s", todo.Id, todo.Title)
-	return todo, nil
+	return s.repo.Create(ctx, req.Title, req.Description)
 }
 
 func (s *server) GetTodo(ctx context.Context, req *pb.GetTodoRequest) (*pb.Todo, error) {
-	var (
-		id, title, description string
-		completed              bool
-		createdAt              time.Time
-	)
-
-	err := s.db.QueryRow(ctx, `
-		SELECT id::text, title, description, completed, created_at
-		FROM todos
-		WHERE id = $1
-	`, req.Id).Scan(&id, &title, &description, &completed, &createdAt)
-
-	if err != nil {
-		if err.Error() == "no rows in result set" {
-			return nil, status.Errorf(codes.NotFound, "todo with id %s not found", req.Id)
-		}
-		log.Printf("GetTodo errorr: %v", err)
-		return nil, status.Error(codes.Internal, "failed to get todo")
-	}
-
-	return &pb.Todo{
-		Id:          id,
-		Title:       title,
-		Description: description,
-		Completed:   completed,
-		CreatedAt:   createdAt.Unix(),
-	}, nil
+	return s.repo.Get(ctx, req.Id)
 }
 
 func (s *server) ListTodos(ctx context.Context, req *pb.ListTodosRequest) (*pb.ListTodosResponse, error) {
-	var rows pgx.Rows
-	var err error
-
-	if req.Completed != nil {
-		rows, err = s.db.Query(ctx, `
-			SELECT id::text, title, description, completed, created_at
-			FROM todos
-			WHERE completed = $1
-			ORDER BY created_at DESC
-		`, *req.Completed)
-	} else {
-		rows, err = s.db.Query(ctx, `
-			SELECT id::text, title, description, completed, created_at
-			FROM todos
-			ORDER BY created_at DESC
-		`)
-	}
-
+	todos, err := s.repo.List(ctx, req.Completed)
 	if err != nil {
-		log.Printf("ListTodos error: %v", err)
-		return nil, status.Error(codes.Internal, "failed to list todos")
-	}
-	defer rows.Close()
-
-	var todos []*pb.Todo
-	for rows.Next() {
-		var (
-			id, title, description string
-			completed              bool
-			createdAt              time.Time
-		)
-		if err := rows.Scan(&id, &title, &description, &completed, &createdAt); err != nil {
-			return nil, status.Error(codes.Internal, "failed to scan todo")
-		}
-		todos = append(todos, &pb.Todo{
-			Id:          id,
-			Title:       title,
-			Description: description,
-			Completed:   completed,
-			CreatedAt:   createdAt.Unix(),
-		})
+		return nil, err
 	}
 	return &pb.ListTodosResponse{Todos: todos}, nil
 }
 
 func (s *server) UpdateTodo(ctx context.Context, req *pb.UpdateTodoRequest) (*pb.Todo, error) {
-	// First check if the todo exists
-	var exists bool
-	err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM todos WHERE id = $1)`, req.Id).Scan(&exists)
-	if err != nil {
-		return nil, status.Error(codes.Internal, "failed to check todo")
-	}
-	if !exists {
-		return nil, status.Errorf(codes.NotFound, "todo with id %s not found", req.Id)
-	}
-	// Build dynamic update (only update provided fields)
-	query := `
-		UPDATE todos
-		SET title = COALESCE(NULLIF($2, ''), title),
-			description = COALESCE(NULLIF($3, ''), description),
-			completed = $4
-		WHERE id = $1
-		RETURNING id::text, title, description, completed, created_at
-	`
-	var (
-		id, title, description string
-		completed              bool
-		createdAt              time.Time
-	)
-
-	err = s.db.QueryRow(ctx, query, req.Id, req.Title, req.Description, req.Completed).
-		Scan(&id, &title, &description, &completed, &createdAt)
-
-	if err != nil {
-		log.Printf("UpdateTodo error: %v", err)
-		return nil, status.Error(codes.Internal, "failed to update todo")
-	}
-
-	log.Printf("Upated todo: %s", id)
-	return &pb.Todo{
-		Id:          id,
-		Title:       title,
-		Description: description,
-		Completed:   completed,
-		CreatedAt:   createdAt.Unix(),
-	}, nil
+	return s.repo.Update(ctx, req.Id, req.Title, req.Description, req.Completed)
 }
 
 func (s *server) DeleteTodo(ctx context.Context, req *pb.DeleteTodoRequest) (*pb.DeleteTodoResponse, error) {
-	result, err := s.db.Exec(ctx, `DELETE FROM todos WHERE id = $1`, req.Id)
-	if err != nil {
-		log.Printf("DeleteTodo error: %v", err)
-		return nil, status.Error(codes.Internal, "failed to delete todo")
+	if err := s.repo.Delete(ctx, req.Id); err != nil {
+		return nil, err
 	}
-
-	if result.RowsAffected() == 0 {
-		return nil, status.Errorf(codes.NotFound, "todo with id %s not found", req.Id)
-	}
-
-	log.Printf("Deleted todo: %s", req.Id)
 	return &pb.DeleteTodoResponse{Success: true}, nil
 }
 
 func main() {
-	// Connection string - you can also use environment variable
-	dsn := os.Getenv("DATABASE_URL")
-	if dsn == "" {
-		// Default for lcoal development
-		dsn = "postgres://postgres:postgres@localhost:5432/todo_db?sslmode=disable"
+	// ============================================================
+	// SWITCH DRIVER HERE
+	// ============================================================
+	// Options: "memory" | "pgx" | "pq"
+	driver := os.Getenv("DB_DRIVER")
+	if driver == "" {
+		driver = "memory" // default for easy local testing
 	}
 
-	ctx := context.Background()
-	db, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		log.Fatalf("Unable to connect to database: %v", err)
-	}
-	defer db.Close()
+	var repo repository.TodoRepository
 
-	// Test the connection
-	if err := db.Ping(ctx); err != nil {
-		log.Fatalf("unable to ping database: %v", err)
-	}
-	log.Println(" Connected to PostgreSQL")
+	switch driver {
+	case "memory":
+		repo = repository.NewMemoryRepository()
+		log.Println("✅ Using in-memory repository")
+	case "pgx":
+		dsn := getDSN()
+		pool, err := pgxpool.New(context.Background(), dsn)
+		if err != nil {
+			log.Fatalf("pgx: unable to connect: %v", err)
+		}
+		if err := pool.Ping(context.Background()); err != nil {
+			log.Fatalf("pgx: ping failed: %v", err)
+		}
+		repo = repository.NewPgxReposistory(pool)
+		log.Println("✅ Using PostgreSQL with pgx")
 
-	// Create the table if it doesn't exist
-	schema, err := os.ReadFile("server/schema.sql")
-	if err != nil {
-		// fallback - embed the system
-		schema = []byte(`
-			CREATE TABLE IF NOT EXISTS todos (
-				id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-				title TEXT NOT NULL, 
-				description TEXT NOT NULL DEFAULT '',
-				completed BOOLEAN NOT NULL DEFAULT FALSE,
-				created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-			);
-			CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos(completed);
-		`)
-	}
+	case "pg":
+		dsn := getDSN()
+		db, err := sql.Open("postgres", dsn)
+		if err != nil {
+			log.Fatalf("pq: unable to open: %v", err)
+		}
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(5)
+		db.SetConnMaxLifetime(5 * time.Minute)
 
-	if _, err := db.Exec(ctx, string(schema)); err != nil {
-		log.Fatalf("Failed to create schema: %v", err)
+		if err := db.Ping(); err != nil {
+			log.Fatalf("pq: ping failed: %v", err)
+		}
+		if err := ensureSchemaSQL(db); err != nil {
+			log.Fatalf("pq: schema failed: %v", err)
+		}
+		repo = repository.NewPqRepository(db)
+		log.Println("✅ Using PostgreSQL with lib/pq")
+
+	default:
+		log.Fatalf("unknown DB_DRIVER: %s (use memory|pgx|pq)", driver)
 	}
-	log.Println(" Schema ready")
 
 	lis, err := net.Listen("tcp", port)
 	if err != nil {
@@ -244,10 +112,46 @@ func main() {
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterTodoServiceServer(s, newServer(db))
+	pb.RegisterTodoServiceServer(s, newServer(repo))
 
 	fmt.Printf("🚀 gRPC Todo Server listening on %s\n", port)
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
+}
+
+func getDSN() string {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://postgres:postgres@localhost:5432/todo_db?sslmode=disable"
+	}
+	return dsn
+}
+
+func ensureSchemaPgx(pool *pgxpool.Pool) error {
+	_, err := pool.Exec(context.Background(), `
+		CREATE TABLE IF NOT EXISTS todos (
+			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			title       TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			completed   BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos(completed);
+	`)
+	return err
+}
+
+func ensureSchemaSQL(db *sql.DB) error {
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS todos (
+			id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			title       TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			completed   BOOLEAN NOT NULL DEFAULT FALSE,
+			created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS idx_todos_completed ON todos(completed);
+	`)
+	return err
 }
